@@ -2,6 +2,29 @@
 
 A Pi provider extension for [Claude Code Router (CCR)](https://github.com/musistudio/claude-code-router), with optional route-specific model metadata from [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI).
 
+**This is a niche integration for existing CCR users, not a general replacement for Pi's built-in provider login.**
+
+## Who this is for
+
+Use this extension when you **already run CCR** and want Pi to reuse its model catalog and routing without duplicating configuration. It is especially useful if you:
+
+- run CCR with multiple providers, accounts, or models;
+- add or change models in CCR and want Pi's `/model` list to discover them automatically;
+- use CCR aliases, routing, profiles, or fallback behavior;
+- use CPA behind CCR and want context/output limits from the actual CPA route rather than generic model metadata;
+- want to avoid hand-maintaining CCR model definitions in Pi's `models.json`.
+
+## Who should use something else
+
+This extension is probably unnecessary if you:
+
+- only use official Anthropic or Codex accounts — Pi's built-in `/login` flow is simpler;
+- only use CPA — connecting Pi directly to CPA avoids an extra CCR layer;
+- do not already run CCR and do not want another long-running local service;
+- prefer a small, static provider configuration over dynamic discovery.
+
+In short: **use Pi login for direct official access, connect directly to CPA for a CPA-only setup, and use this extension only when CCR itself is already part of your workflow.**
+
 ## Features
 
 - Discovers models from CCR at startup and whenever Pi refreshes the model catalog.
