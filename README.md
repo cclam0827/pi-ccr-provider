@@ -67,10 +67,8 @@ CPA's `context_window` is preferred over the potentially larger `max_context_win
 
 ### From a Git repository
 
-Replace the placeholder with your repository owner:
-
 ```bash
-pi install git:github.com/YOUR_GITHUB_USERNAME/pi-ccr-provider
+pi install git:github.com/cclam0827/pi-ccr-provider
 ```
 
 ### From a local checkout
