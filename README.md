@@ -30,6 +30,8 @@ In short: **use Pi login for direct official access, connect directly to CPA for
 - Discovers models from CCR at startup and whenever Pi refreshes the model catalog.
 - Registers CCR routes under the `ccr` provider using OpenAI Responses.
 - Resolves reasoning, thinking levels, input modalities, input limits, pricing, and fallback token limits from Pi's built-in model catalog.
+- Reads the limits CCR advertises per route (`context_window`, `max_input_tokens`, `max_context_window`, `max_output_tokens`) so models Pi has never heard of get the budget CCR actually routes with.
+- Maps `supported_reasoning_levels` from CCR onto Pi thinking levels, so thinking levels match what the route accepts.
 - Optionally reads `context_window` and `max_tokens` directly from CPA for `CPA/...` routes.
 - Persists model metadata snapshots for offline or transient-failure fallback.
 - Never writes API keys into source files or model-catalog snapshots.
@@ -47,14 +49,29 @@ Inference:
 
 The extension only changes model registration and metadata. Inference still goes through CCR; Pi does not bypass it when talking to CPA.
 
-Metadata precedence for CPA routes:
+Metadata precedence:
 
-1. CPA `context_window` and `max_tokens`
-2. CPA `max_input_tokens`, then `max_context_window` for context when necessary
+1. CPA `context_window` and `max_tokens` (live enrichment, `CPA/...` routes only)
+2. CCR advertised limits for the route: `context_window`, then `max_input_tokens`, then `max_context_window`
 3. Pi's built-in catalog
 4. Conservative defaults for unknown models: 128K context, 16K output, text input, no reasoning
 
-CPA's `context_window` is preferred over the potentially larger `max_context_window`, because Pi has a single `contextWindow` used for budgeting and compaction. These are advertised limits; the upstream service may still enforce a smaller actual limit.
+`context_window` is preferred over the potentially larger `max_context_window`, because Pi has a single `contextWindow` used for budgeting and compaction. These are advertised limits; the upstream service may still enforce a smaller actual limit.
+
+CCR resolves the numbers in layer 2 from your provider's `modelMetadata` first, then from its own model catalog. A shortened model name can therefore inherit a large catalog context window, so set `modelMetadata.<model>.contextWindow` to what the upstream really accepts:
+
+```json
+{
+  "name": "oMLX-CF",
+  "models": ["Qwen3.8-Flash", "Inkling-2-Mini"],
+  "modelMetadata": {
+    "Qwen3.8-Flash": { "contextWindow": 262144, "maxOutputTokens": 32768 },
+    "Inkling-2-Mini": { "contextWindow": 131072, "maxOutputTokens": 32768 }
+  }
+}
+```
+
+Reasoning levels follow the same idea: `supported_reasoning_levels` narrows Pi's thinking levels, a level Pi maps to `null` stays unavailable, and `off` stays available unless the catalog forbids it, because a route listing no no-thinking effort does not mean thinking cannot be switched off. Pi's own `modelOverrides` are applied last and outrank everything above.
 
 ## Requirements
 

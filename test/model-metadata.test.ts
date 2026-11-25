@@ -99,6 +99,83 @@ test("toCcrModel uses conservative metadata for unknown models", () => {
 	assert.deepEqual(result.input, ["text"]);
 });
 
+test("toCcrModel prefers the context window CCR advertises for the route", () => {
+	const known = model("Qwen3.8-Flash", { contextWindow: 1_000_000, maxTokens: 131_072 });
+	const result = toCcrModel(
+		{
+			id: "oMLX-CF/Qwen3.8-Flash",
+			owned_by: "oMLX-CF",
+			context_window: 262_144,
+			max_context_window: 1_048_576,
+			max_input_tokens: 262_144,
+		},
+		CCR_BASE_URL,
+		new Map([[known.id, known]]),
+	);
+
+	assert.equal(result.contextWindow, 262_144);
+	assert.equal(result.maxTokens, 131_072);
+});
+
+test("advertised limits fall back through max_input_tokens then max_context_window", () => {
+	const byInput = toCcrModel({ id: "a/x", owned_by: "a", max_input_tokens: 272_000 }, CCR_BASE_URL, new Map());
+	const byMax = toCcrModel({ id: "a/y", owned_by: "a", max_context_window: 872_000 }, CCR_BASE_URL, new Map());
+	const invalid = toCcrModel({ id: "a/z", owned_by: "a", context_window: 0 }, CCR_BASE_URL, new Map());
+
+	assert.equal(byInput.contextWindow, 272_000);
+	assert.equal(byMax.contextWindow, 872_000);
+	assert.equal(invalid.contextWindow, 128_000);
+});
+
+test("CCR reasoning levels become a Pi thinking map", () => {
+	const result = toCcrModel(
+		{
+			id: "oMLX-CF/Qwen3.8-Flash",
+			owned_by: "oMLX-CF",
+			supported_reasoning_levels: ["off", "low", "medium", { description: "Extra high", effort: "xhigh" }],
+		},
+		CCR_BASE_URL,
+		new Map(),
+	);
+
+	assert.equal(result.reasoning, true);
+	assert.equal(result.thinkingLevelMap?.medium, "medium");
+	assert.equal(result.thinkingLevelMap?.xhigh, "xhigh");
+	assert.equal(result.thinkingLevelMap?.high, null);
+	assert.equal(result.thinkingLevelMap?.max, null);
+});
+
+test("CCR levels narrow Pi catalog levels without dropping thinking off", () => {
+	const known = model("claude-test", {
+		reasoning: true,
+		thinkingLevelMap: { off: "off", low: "low", medium: "medium", max: null } as Model<Api>["thinkingLevelMap"],
+	});
+	const result = toCcrModel(
+		{ id: "CPA/claude-test", owned_by: "CPA", supported_reasoning_levels: ["low", "medium", "xhigh"] },
+		CCR_BASE_URL,
+		new Map([[known.id, known]]),
+	);
+
+	assert.equal(result.thinkingLevelMap?.off, "off");
+	assert.equal(result.thinkingLevelMap?.xhigh, "xhigh");
+	assert.equal(result.thinkingLevelMap?.high, null);
+	assert.equal(result.thinkingLevelMap?.max, null);
+});
+
+test("unrecognized reasoning vocabulary keeps catalog levels and marks reasoning off-only", () => {
+	const unknownVocabulary = toCcrModel(
+		{ id: "a/x", owned_by: "a", supported_reasoning_levels: [{ effort: "turbo" }] },
+		CCR_BASE_URL,
+		new Map(),
+	);
+	const offOnly = toCcrModel({ id: "a/y", owned_by: "a", supported_reasoning_levels: ["off"] }, CCR_BASE_URL, new Map());
+	const required = toCcrModel({ id: "a/z", owned_by: "a", reasoning_required: true }, CCR_BASE_URL, new Map());
+
+	assert.equal(unknownVocabulary.thinkingLevelMap, undefined);
+	assert.equal(offOnly.reasoning, false);
+	assert.equal(required.reasoning, true);
+});
+
 test("parseCpaModelList reads positive numeric limits", () => {
 	const catalog = parseCpaModelList({
 		models: [

@@ -1,6 +1,6 @@
 {
   "name": "pi-ccr-provider",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Dynamic Claude Code Router provider for Pi, with optional CLIProxyAPI model metadata enrichment.",
   "type": "module",
   "license": "MIT",

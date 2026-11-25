@@ -14,7 +14,17 @@ interface CcrModelEntry {
 	id: string;
 	owned_by?: string;
 	display_name?: string;
+	context_window?: number;
+	max_context_window?: number;
+	max_input_tokens?: number;
+	max_output_tokens?: number;
+	supported_reasoning_levels?: unknown;
+	reasoning_required?: boolean;
 }
+
+// Pi levels CCR can address by name. CCR advertises its own level vocabulary,
+// so a derived map only uses names both sides recognize.
+const PI_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 interface CcrModelList {
 	data?: unknown;
@@ -68,6 +78,13 @@ export function toCcrModel(
 	const known = catalog.get(upstreamId);
 	const displayName = entry.display_name ?? known?.name ?? upstreamId;
 	const owner = entry.owned_by ? `${entry.owned_by} / ` : "";
+	// CCR advertises the effective per-route budget, already reduced by the
+	// provider's effectiveContextWindowPercent. That is route truth, so it wins
+	// over Pi's generic catalog guess for the same model id.
+	const advertisedContextWindow = ccrModelContextWindow(entry);
+	const advertisedMaxTokens = positiveNumber(entry.max_output_tokens);
+	const reasoningLevels = ccrModelReasoningLevels(entry);
+	const thinkingLevelMap = reasoningLevelMap(reasoningLevels, known);
 
 	return {
 		type: "chat",
@@ -76,13 +93,16 @@ export function toCcrModel(
 		api: "openai-responses",
 		provider: PROVIDER_ID,
 		baseUrl,
-		reasoning: known?.reasoning ?? false,
-		thinkingLevelMap: known?.thinkingLevelMap,
+		reasoning:
+			reasoningLevels.some((level) => level !== "off") || entry.reasoning_required === true
+				? true
+				: (known?.reasoning ?? false),
+		thinkingLevelMap,
 		input: known?.input ?? ["text"],
 		inputLimits: known?.inputLimits,
 		cost: known?.cost ?? { ...ZERO_COST },
-		contextWindow: known?.contextWindow ?? 128_000,
-		maxTokens: known?.maxTokens ?? 16_384,
+		contextWindow: advertisedContextWindow ?? known?.contextWindow ?? 128_000,
+		maxTokens: advertisedMaxTokens ?? known?.maxTokens ?? 16_384,
 
 		// Deliberately do not copy compat, headers, sampling parameters, or
 		// prompt-cache settings from the upstream provider. Those describe the
@@ -105,6 +125,15 @@ export function parseModelList(payload: CcrModelList): CcrModelEntry[] {
 			id: candidate.id,
 			owned_by: typeof candidate.owned_by === "string" ? candidate.owned_by : undefined,
 			display_name: typeof candidate.display_name === "string" ? candidate.display_name : undefined,
+			context_window: positiveNumber(candidate.context_window),
+			max_context_window: positiveNumber(candidate.max_context_window),
+			max_input_tokens: positiveNumber(candidate.max_input_tokens),
+			max_output_tokens: positiveNumber(candidate.max_output_tokens ?? candidate.max_tokens),
+			supported_reasoning_levels: Array.isArray(candidate.supported_reasoning_levels)
+				? candidate.supported_reasoning_levels
+				: undefined,
+			reasoning_required:
+				typeof candidate.reasoning_required === "boolean" ? candidate.reasoning_required : undefined,
 		};
 		entries.set(entry.id, entry);
 	}
@@ -143,6 +172,59 @@ async function fetchCcrModels(
 
 function positiveNumber(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : undefined;
+}
+
+export function ccrModelContextWindow(entry: CcrModelEntry): number | undefined {
+	// context_window is the route budget; the wider max_context_window is only a
+	// fallback, matching how Pi budgets one number per model.
+	return (
+		positiveNumber(entry.context_window) ??
+		positiveNumber(entry.max_input_tokens) ??
+		positiveNumber(entry.max_context_window)
+	);
+}
+
+export function ccrModelReasoningLevels(entry: CcrModelEntry): string[] {
+	if (!Array.isArray(entry.supported_reasoning_levels)) return [];
+
+	const levels: string[] = [];
+	for (const item of entry.supported_reasoning_levels) {
+		const effort =
+			typeof item === "string"
+				? item
+				: item && typeof item === "object"
+					? (item as { effort?: unknown }).effort
+					: undefined;
+			if (typeof effort === "string" && effort.trim()) levels.push(effort.trim());
+	}
+	return levels;
+}
+
+function reasoningLevelMap(
+	levels: string[],
+	known: Model<Api> | undefined,
+): Model<Api>["thinkingLevelMap"] | undefined {
+	// CCR may advertise a vocabulary Pi does not address by name. Keep whatever
+	// Pi already knows instead of guessing, so no level silently disappears.
+	if (levels.length === 0 || !levels.some((level) => PI_THINKING_LEVELS.includes(level))) {
+		return known?.thinkingLevelMap;
+	}
+
+	const catalog = known?.thinkingLevelMap as Record<string, string | null | undefined> | undefined;
+	const map: Record<string, string | null> = {};
+	for (const level of PI_THINKING_LEVELS) {
+		const mapped = catalog?.[level];
+		if (mapped === null) {
+			map[level] = null;
+		} else if (level === "off") {
+			// Omitting "off" only means the route never lists a no-thinking effort;
+		// it does not mean thinking cannot be switched off.
+			map[level] = mapped ?? "off";
+		} else {
+			map[level] = levels.includes(level) ? (mapped ?? level) : null;
+		}
+	}
+	return map as Model<Api>["thinkingLevelMap"];
 }
 
 export function parseCpaModelList(payload: CpaModelList): Map<string, CpaModelEntry> {
